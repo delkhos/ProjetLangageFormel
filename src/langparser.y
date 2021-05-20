@@ -8,6 +8,7 @@ int yylex();
 
 /***************************************************************************/
 /* Data structures for storing a programme.                                */
+
 typedef struct var	// a variable
 {
 	char *name;
@@ -15,27 +16,38 @@ typedef struct var	// a variable
 	struct var *next;
 } var;
 
-typedef struct varlist	// variable reference (used for print statement)
-{
-	struct var *var;
-	struct varlist *next;
-} varlist;
+typedef var *varlist;
 
-typedef struct expr	// boolean expression
+typedef struct expr
 {
-	int type;	// TRUE, FALSE, OR, AND, NOT, EQUIV, 0 (variable)
-	var *var;
-	struct expr *left, *right;
+	int type;
+	expr *left, *right;
+	int value;
 } expr;
 
-typedef struct stmt	// command
+typedef struct stmt
 {
-	int type;	// ASSIGN, ';', WHILE, PRINT
+	int type;
 	var *var;
 	expr *expr;
-	struct stmt *left, *right;
-	varlist *list;
+	varlist *varlist;
+	stmt *next;
 } stmt;
+
+typedef stmt *stmtlist;
+
+typedef struct proc
+{
+	char *name;
+	varlist *vars;
+	stmtlist *stmts;
+} proc;
+
+typedef struct proclist
+{
+	proc *proc;
+	struct proclist *next;
+} proclist;
 
 /****************************************************************************/
 /* All data pertaining to the programme are accessible from these two vars. */
@@ -72,27 +84,12 @@ varlist* make_varlist (char *s)
 	return l;
 }
 
-expr* make_expr (int type, var *var, expr *left, expr *right)
+stmtlist* make_stmtlist (stmt s)
 {
-	expr *e = malloc(sizeof(expr));
-	e->type = type;
-	e->var = var;
-	e->left = left;
-	e->right = right;
-	return e;
-}
-
-stmt* make_stmt (int type, var *var, expr *expr,
-			stmt *left, stmt *right, varlist *list)
-{
-	stmt *s = malloc(sizeof(stmt));
-	s->type = type;
-	s->var = var;
-	s->expr = expr;
-	s->left = left;
-	s->right = right;
-	s->list = list;
-	return s;
+	stmtlist *l = malloc(sizeof(varlist));
+	l->stmt = s;
+	l->next = NULL;
+	return l;
 }
 
 
@@ -102,17 +99,31 @@ stmt* make_stmt (int type, var *var, expr *expr,
 
 %union {
 	char *i;
+	int *n;
 	var *v;
-  int *n;
 	varlist *l;
 	expr *e;
 	stmt *s;
+	stmtlist *sl;
+	guard *g;
+	guardlist *gl;
+	proc *p;
+	proclist *pl;
+	reach *r;
+	reachlist *rl;
 }
 
 %type <v> declist
 %type <l> varlist
 %type <e> expr
 %type <s> stmt assign
+%type <sl> stmtlist
+%type <g> guard
+%type <gl> guardlist
+%type <p> proc
+%type <pl> proclist
+%type <r> reach
+%type <rl> reachlist
 
 %token VAR COMMA SEMICOLON PROC END IF FI DO OD GUARD ARROW ELSE SKIP REACH BREAK ASSIGN PLUS MINUS TIMES DIV MOD OR AND NOT EQUALS GT GTE LT LTE NOTEQUALS
 
@@ -130,16 +141,62 @@ stmt* make_stmt (int type, var *var, expr *expr,
 
 %%
 
-prog : declist proclist speclist {}
+prog : declist proclist reachlist {}
 
-declist : decl {}
-  | decl declist
+
+declist : 
+		| decl {}
+ 		| decl declist
 
 decl : VAR varlist SEMICOLON {}
 
 varlist : IDENT {}
-  | IDENT COMMA varlist
+  | IDENT COMMA varlist {}
+
+expr : IDENT {}
+	 | INT {}
+	 | expr OR expr {}
+	 | expr AND expr {}
+	 | expr EQUALS expr {}
+	 | expr NOTEQUALS expr {}
+	 | NOT expr {}
+	 | '(' expr ')' {}
+	 | expr PLUS expr {}
+	 | expr MINUS expr {}
+	 | expr TIMES expr {}
+	 | expr MOD expr {}
+	 | expr DIV expr {}
+	 | expr GT expr {}
+	 | expr GTE expr {}
+	 | expr LT expr {}
+	 | expr LTE expr {}
+
+assign : IDENT ASSIGN expr {}
+
+stmt : assign {}
+	 | stmt SEMICOLON stmt {}
+	 | DO guardlist OD {}
+	 | IF guardlist FI {}
+
+proclist : proc {}
+		 | proc proclist {}
+
+proc : PROC declist stmtlist END {}
+
+stmtlist : stmt {}
+		 | stmt SEMICOLON stmtlist {}
+
+guardlist : guard {}
+		  | guard guardlist
+
+guard : GUARD expr ARROW stmtlist
+
+reach : REACH expr
+
+reachlist : //empty
+		  | reach
+		  | reach reachlist
 
 %%
 
-
+#include "langlex.c"
