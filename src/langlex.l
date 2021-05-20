@@ -1,46 +1,10 @@
 %option noyywrap
-
-DIG	[0-9]
+%option yylineno
 
 %{
 #include <string.h>
+#include <stdio.h>
 
-/*
-enum yytokentype {
-  VAR ,
-  COMMA ,
-  SEMICOLON ,
-  PROC ,
-  END ,
-  IF ,
-  FI ,
-  DO ,
-  OD ,
-  GUARD ,
-  ARROW ,
-  ELSE ,
-  SKIP ,
-  REACH ,
-  BREAK ,
-  ASSIGN ,
-  PLUS ,
-  MINUS ,
-  TIMES ,
-  DIV ,
-  MOD ,
-  OR ,
-  AND ,
-  NOT ,
-  EQUALS,
-  GT ,
-  GTE ,
-  LT ,
-  LTE ,
-  NOTEQUALS,
-  INT ,
-  IDENT
-};
-*/
 
 %}
 
@@ -49,7 +13,7 @@ enum yytokentype {
 
 "//"[^\n]*"\n" {} /* TODO pprint */
 
-"var" { return VAR;}
+"var" {  return VAR;}
 "," { return COMMA;}
 ";" { return SEMICOLON;}
 "proc" {return PROC;}
@@ -79,8 +43,10 @@ enum yytokentype {
 "<" {return LT;}
 "<=" {return LTE;}
 "!=" {return NOTEQUALS;}
+"(" {return LP;}
+")" {return RP;}
 
-[DIG]+ {yylval.n = atoi(yytext) ; return INT;}  
+[0-9]+ {yylval.n = atoi(yytext) ; return INT;}  
 
 [a-zA-Z_][a-zA-Z0-9_]* { yylval.i = strdup(yytext); return IDENT; }
 
