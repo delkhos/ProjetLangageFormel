@@ -5,7 +5,8 @@ DIG	[0-9]
 %{
 #include <string.h>
 
-enum {
+/*
+enum yytokentype {
   VAR ,
   COMMA ,
   SEMICOLON ,
@@ -39,11 +40,8 @@ enum {
   INT ,
   IDENT
 };
+*/
 
-union {
-        int i;
-        char *s;
-} yylval; 
 %}
 
 
@@ -82,20 +80,12 @@ union {
 "<=" {return LTE;}
 "!=" {return NOTEQUALS;}
 
-[DIG]+ {yylval.i = atoi(yytext) ; return INT;}  
+[DIG]+ {yylval.n = atoi(yytext) ; return INT;}  
 
-[a-zA-Z_][a-zA-Z0-9_]* { yylval.s = strdup(yytext); return IDENT; }
+[a-zA-Z_][a-zA-Z0-9_]* { yylval.i = strdup(yytext); return IDENT; }
 
 [	 \n]   { /* ignore */ }
 
 .	{ return *yytext; }
 
 %%
-
-int main()
-{
-        yylex();
-        printf("\n");
-}
-
-
