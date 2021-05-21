@@ -86,6 +86,7 @@ typedef proc proclist;
 var *global_vars;
 proc *procs;
 reach *reaches;
+int *reaches_value;
 
 
 int get_rand(int n)
@@ -269,7 +270,7 @@ expr : IDENT {$$ = make_expr(IDENT,NULL,NULL,0,$1); }
 	 | expr GTE expr { $$ = make_expr(GTE,$1,$3,0,NULL); }
 	 | expr LT expr { $$ = make_expr(LT,$1,$3,0,NULL); }
 	 | expr LTE expr { $$ = make_expr(LTE,$1,$3,0,NULL); }
-	 | LP expr RP { $$ = make_expr(LTE,$2,NULL,0,NULL); }
+	 | LP expr RP { $$ = make_expr(-1,$2,NULL,0,NULL); }
 
 assign : IDENT ASSIGN expr {$$ = make_stmt(ASSIGN, $1, $3, NULL,  NULL);}
 
@@ -491,41 +492,78 @@ typedef struct simulation_struct
   var* lvs;
 } simulation_struct;
 
+simulation_struct* make_simulation_struct(stmt* stmt, context* context, var* gvs, var* lvs)
+{
+  simulation_struct* st = malloc(sizeof(simulation_struct));
+  st->stmt = stmt;
+  st->context = context;
+  st->gvs = gvs;
+  st->lvs = lvs;
+  return st;
+}
+
 void goto_next(simulation_struct* st)
 {
   if(st->stmt->next == NULL)
   {
+    /* simplifiable */
+    //printf("PAS DE NEXT\n");
     if(st->context == NULL)
     {
+      //printf("PLUS DE CONTEXT\n");
       st->stmt = NULL;
-    }
-    if(st->context->stmt->type == IF)
-    {
-      do 
-      {
-        st->stmt = st->context->stmt->next;
-        context* tmp = st->context;
-        st->context = tmp->next;
-        free(tmp);
-        if(st->stmt == NULL && st->context->stmt->type == DO){
-          st->stmt = st->context->stmt;
-          context* tmp = st->context;
-          st->context = tmp->next;
-          free(tmp);
-          return;
-        }
-      }while(st->stmt == NULL && st->context != NULL);
       return;
     }
-    if(st->context->stmt->type == DO){
-      st->stmt = st->context->stmt;
+    stmt* current = NULL;
+    //printf("ok\n");
+    do{
+      //printf("A\n");
+      current = st->context->stmt;
+      //printf("B\n");
       context* tmp = st->context;
-      st->context = tmp->next;
-      free(tmp);
-      return;          
+      //printf("C\n");
+      if(tmp != NULL){
+        //printf("E\n");
+        st->context = tmp->next;
+        free(tmp);
+      }
+      //printf("D\n");
+      if( current == NULL)
+        {
+        //printf("Z\n");
+        }
+      if( current != NULL){
+        int test;
+        //printf("F\n");
+        test = st->context != NULL;
+        //printf("G\n");
+        test = current->type != DO;
+        //printf("H\n");
+        test = current->next == NULL;
+        //printf("I\n");
+              
+      }
+    }while(st->context != NULL && current->type != DO && current->next == NULL);
+    //printf("pas ok\n");
+    if(current == NULL){
+      st->stmt = NULL;
+    }else if(current->type == DO )
+    {
+      st->stmt = current;
+    }else if(current->type == IF){
+      //printf("LAAAA\n");
+      //pprint_stmts(current,0);
+      st->stmt = current->next;
+    }else{
+      yyerror("This shouldn't never happend, goto");
     }
+      //pprint_stmts(st->stmt,0);
+    //printf("NOI\n");
+    return;
   }else{
-    st->stmt = st->stmt->next ; return ;
+    //printf("YES DE NEXT\n");
+    st->stmt = st->stmt->next ; 
+    return ;
   }
   yyerror("shouldn't happen SKIP");
 }
@@ -570,22 +608,60 @@ guard_possibilities* make_guard_possibility(guard* guard, guard_possibilities* n
   return g;
 }
 
+void pprint_guarrds(  guard_possibilities* pguards   ){
+  if(pguards == NULL)return ;
+  pprint_stmts(pguards->guard->stmts,0);
+  pprint_guarrds( pguards->next);
+  
+}
+
 int get_possibilities_size(guard_possibilities* poss);
 
 guard_possibilities* suitable_guards(simulation_struct* st, guard* guards)
 {
   guard_possibilities* res = NULL;
-  while(guards->next != NULL)
-  {
+  int n_non_else = 0;
+  int n_else = 0;
+  while(guards != NULL)
+  { 
+    if( !guards->guardexpr->is_else ){
+      //printf("todo = %d et eval = %d et lock = %d\n", get_var("todo",st->gvs, st->lvs)->value, eval(guards->guardexpr->expr, st->gvs, st->lvs), get_var("lock",st->gvs, st->lvs)->value );
+    }
+
     if(guards->guardexpr->is_else || eval(guards->guardexpr->expr, st->gvs, st->lvs))
     {
+      //pprint_stmts( guards->stmts,0);
       res = make_guard_possibility(guards, res);
+      if(!guards->guardexpr->is_else ){
+        //printf("le pas else est suitable \n");
+        n_non_else += 1;
+      }else{
+        //printf("le else est suitable\n");
+        n_else += 1;
+      }
     }
     guards = guards->next;    
   }
   /* TODO si parmis les réalisables, aucun non_else, garder les else, sinon les virer */
+  if(n_non_else > 0 && n_else > 0){
+    guard_possibilities* clean_res = NULL;
+    while(res!= NULL){
+      if( res->guard->guardexpr->is_else ){
+        guard_possibilities* tmp = res->next;
+        free(res);
+        res = tmp;
+      }else{
+        guard_possibilities* tmp = res->next;
+        res->next = clean_res;
+        clean_res = res;
+        res = tmp;
+      }
+    }
 
-  return res;
+    return clean_res;
+  }else{
+    return res;
+  }
 }
 
 void free_guard_possibilities(guard_possibilities* poss)
@@ -607,11 +683,27 @@ stmt* get_guard(guard_possibilities* poss)
 {
   int n = get_possibilities_size(poss);
   int roll = get_rand(n);
-  for(int i = 0 ; i<n ; i++){
+  //printf("npossibilities = %d ; roll = %d",n,roll);
+  for(int i = 0 ; i<(roll-1) ; i++){
     poss = poss->next;
+  }
+  if(poss->guard->guardexpr->is_else){
+    //printf(" ELSE \n");
+  }else{
+    //printf(" PAS ELSE \n");
   }
   return poss->guard->stmts;
 
+}
+
+void print_stmt_type(int type){
+  switch(type){
+    case BREAK: printf("TYPE BREAK\n"); return;
+    case SKIP: printf("TYPE SKIP\n"); return;
+    case ASSIGN: printf("TYPE ASSIGN\n"); return;
+    case DO: printf("TYPE DO\n"); return;
+    case IF: printf("TYPE IF\n"); return;
+  }
 }
 
 
@@ -622,18 +714,28 @@ void execute_statement(simulation_struct* st){
     case SKIP :
       goto_next(st); return;
     case ASSIGN : 
+      //printf("ASSIGNING %s <- %d\n", st->stmt->var, eval(st->stmt->expr,st->gvs,st->lvs));
       get_var(st->stmt->var,st->gvs,st->lvs)->value = eval(st->stmt->expr,st->gvs,st->lvs); 
       goto_next(st); 
       return;
     case BREAK : ; 
       stmt* closest_do = get_closests_do(st->context);
+      //print_stmt_type(closest_do->type);
       if(closest_do == NULL)
       {
+        //printf("LLLLLLLLLLLLLLLLLLLLLA\n");
         goto_next(st);
         return;
       }else {
+        //printf("LOOOOOOOOOOOOOOOOOOOOA\n");
+        //print_stmt_type(st->stmt->type);
+        //print_stmt_type(closest_do->type);
+        //print_stmt_type(closest_do->next->type);
         st->stmt = closest_do->next;
+        //print_stmt_type(st->stmt->type);
         st->context = rewind_to_closest_do(st->context);
+        goto_next(st);
+        /*
         while(st->stmt == NULL && st->context!= NULL ){
           if(st->context->stmt->type == DO)
           {
@@ -651,19 +753,24 @@ void execute_statement(simulation_struct* st){
           {
             yyerror("This shouldn't happen BREAK");
           }
-        }
+          */
         return;
       }
-    case DO:
-    case IF: ;
+    case DO:  //printf("DO");
+    case IF: ; //printf("/IF ");
       guard_possibilities* pguards = suitable_guards(st,st->stmt->guards);
       if(pguards == NULL)
       {
         return;
       }else{
+        //printf("********************** POSSIBLE ********************\n");
+        //pprint_guarrds(pguards);
         context* new_context = make_context(st->stmt,st->context);
         st->context = new_context;
         st->stmt = get_guard(pguards);
+        //printf("********************** CHOISI   ********************\n");
+        //pprint_stmts(st->stmt,0);
+        //printf("********************** DONE ************************\n");
         free_guard_possibilities(pguards);
         execute_statement(st);
         return;
@@ -673,7 +780,142 @@ void execute_statement(simulation_struct* st){
   
 }
 
-void interprete(){
+typedef struct eligible_struct
+{
+  simulation_struct* st;
+  struct eligible_struct *next;
+} eligible_struct;
+
+eligible_struct* make_eligible_struct(simulation_struct* st, eligible_struct* next)
+{
+  eligible_struct* es = malloc(sizeof(eligible_struct));
+  es->st = st;
+  es->next = next;
+  return es;
+}
+
+eligible_struct* init_eligible_struct(proc* procs)
+{
+  eligible_struct* es = NULL;
+  while(procs!=NULL)
+  {
+    eligible_struct* tmp = make_eligible_struct(make_simulation_struct(procs->stmts,NULL,global_vars,procs->vars), es);
+    es = tmp;
+    procs = procs->next;
+  }
+  return es;
+}
+
+int is_eligible(simulation_struct* st)
+{
+  if(st->stmt == NULL)
+  {
+    return 0;
+  }
+  switch(st->stmt->type)
+  {
+    case SKIP: /*printf("NEXT SKIP\n");*/ return 1;
+    case BREAK: /*printf("NEXT BREAK\n");*/ return 1;
+    case ASSIGN: /*printf("NEXT ASSIGN\n");*/ return 1;
+    case DO:
+    case IF: ; /*printf("NEXT DO/IF\n");*/
+      guard_possibilities* tmp = suitable_guards(st, st->stmt->guards);
+      if( tmp != NULL){
+        free_guard_possibilities(tmp);
+        return 1;
+      }else{
+        free_guard_possibilities(tmp);
+        return 0;
+      }
+  }
+}
+
+typedef struct eligible_struct_chain
+{ 
+  eligible_struct* es;
+  struct eligible_struct_chain* next;
+} eligible_struct_chain;
+
+void free_eligibles(eligible_struct_chain* eligibles)
+{
+  if(eligibles == NULL) return;
+  eligible_struct_chain* next = eligibles->next;
+  free(eligibles);
+  free_eligibles(next);
+}
+
+eligible_struct_chain* make_eligible_struct_chain(eligible_struct* es, eligible_struct_chain* next)
+{
+  eligible_struct_chain* esc = malloc(sizeof(eligible_struct_chain));
+  esc->es = es;
+  esc->next = next;
+  return esc;
+}
+
+eligible_struct_chain* get_eligible_structs(eligible_struct* ess)
+{
+  eligible_struct_chain* res = NULL;
+  while(ess != NULL)
+  {
+    if( is_eligible(ess->st)){
+      eligible_struct_chain* tmp = make_eligible_struct_chain(ess,res);
+      res = tmp;
+    }
+    ess = ess->next;
+  }
+  return res;
+}
+
+int eligible_structs_size(eligible_struct_chain* esc)
+{
+  if(esc == NULL) return 0;
+
+  return 1 + eligible_structs_size(esc->next);
+}
+
+eligible_struct* elect(eligible_struct_chain* esc)
+{
+  
+  int n = eligible_structs_size(esc);
+  int roll = get_rand(n);
+  for(int i = 0 ; i<(roll-1) ; i++){
+    esc = esc->next;
+  }
+  return esc->es;
+
+}
+
+void interprete(int precision){
+  int j = 0;
+  eligible_struct* est = init_eligible_struct(procs);
+
+  eligible_struct_chain* proc_choices = NULL;
+
+  while( j < precision && (proc_choices= get_eligible_structs(est) ) != NULL ){
+    eligible_struct* elected = elect(proc_choices);
+    execute_statement(elected->st);
+    free_eligibles(proc_choices);
+    j++;
+  }
+
+  eligible_struct* results = est;
+
+  int i = 0;
+
+  reach* reaches_tmp = reaches;
+
+  while(reaches_tmp != NULL)
+  {
+    if(eval(reaches_tmp->expr,global_vars,NULL)){
+      reaches_value[i] += 1;
+    }
+
+    i++;
+
+    reaches_tmp = reaches_tmp->next;
+  }
+  printf("j = %d\n",j);
+  
  /*
   étapes:
     1: créer la liste des simulation_struct
@@ -686,7 +928,46 @@ void interprete(){
     8: ajouter un compteur d'instruction à la struct, et faire la méthode de montecarlo que le prof décrit dans le sujet
  */
 }
+void reset_vars(var* vars){
+  if(vars == NULL) return;
+  vars->value = 0;
+  reset_vars(vars->next);
+}
 
+void reset_all_vars(){
+  reset_vars(global_vars);
+  proc* tmp = procs;
+  while(tmp != NULL){
+    reset_vars(tmp->vars);
+    tmp = tmp->next;
+  }
+}
+
+int reaches_size(reach* reaches){
+  if(reaches==NULL) return 0;
+  return 1 + reaches_size(reaches->next);
+}
+
+void montecarlo(int n, int precision){
+  int i = 0;
+  int n_reaches = reaches_size(reaches);
+  reaches_value = malloc(sizeof(int)*n_reaches); 
+  while(i < n)
+  {
+    reset_all_vars();
+    interprete(precision); 
+    i++;
+  }
+  
+  for(int j = 0; j < n_reaches ; j++)
+  {
+    printf("REACH %d -> %d\n", j+1,reaches_value[j] );
+  }
+  free(reaches_value);
+}
+
+
+/* todo ajouter de la freeance si possible, si possible valgrind ok */
 
 
 /********************** Main **********************/
@@ -698,5 +979,6 @@ int main (int argc, char **argv)
 	yyin = fopen(argv[1],"r");
 	if( !yyparse()){
     pprint_prog();
+    montecarlo(1, 10000);
   }
 }
